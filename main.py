@@ -29,6 +29,7 @@ def main():
         mode=mode,
         project_root=project_root,
         time_now_func=now_time,
+        config=config
     )
 
     register_event_commands(client.tree, client)
