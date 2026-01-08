@@ -25,6 +25,9 @@ TOKEN = config["discord"]["token"]
 MODE = (config.get("app", {}).get("mode") or "test").lower()  # "test" or "prod"
 
 intents = discord.Intents.default()
+intents.members = True         
+intents.message_content = True
+
 
 class MyClient(discord.Client):
     def __init__(self):
@@ -176,6 +179,34 @@ async def event_list(interaction: discord.Interaction, limit: int = 10):
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user} (id: {client.user.id}) | MODE={MODE}")
+
+@client.event
+async def on_member_join(member: discord.Member):
+    cfg = load_config()
+    welcome_cfg = cfg.get("welcome", {})
+
+    channel = None
+
+    if "channel_name" in welcome_cfg:
+        channel = discord.utils.get(
+            member.guild.text_channels,
+            name=welcome_cfg["channel_name"],
+        )
+
+    if channel is None:
+        print("[welcome] welcome channel not found")
+        return
+
+    perms = channel.permissions_for(member.guild.me)
+    if not perms.send_messages:
+        print("[welcome] no permission to send messages")
+        return
+
+    await channel.send(
+        f"欢迎 {member.mention} 加入 🎉\n"
+        f"输入 `/event_create` 可以创建活动。"
+    )
+
 
 client.run(TOKEN)
 

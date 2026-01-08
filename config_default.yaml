@@ -1,2 +1,8 @@
 discord:
   token: "YOUR_DISCORD_BOT_TOKEN"
+  
+app:
+  mode: "test" # test / dev / prod
+
+welcome:
+  channel_name: # any name
