@@ -17,6 +17,7 @@ class Event:
     description: Optional[str]
     created_by: int
     expires_at: str
+    channel_name: str | None
 
 
 class EventStore:
@@ -44,6 +45,7 @@ class EventStore:
                     description TEXT,
                     created_by INTEGER NOT NULL,
                     expires_at TEXT NOT NULL,
+                    channel_name TEXT,
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
                 """
@@ -61,14 +63,15 @@ class EventStore:
         description: Optional[str],
         created_by: int,
         expires_at: str,
+        channel_name: str | None = None,
     ) -> Event:
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO events (guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO events (guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at, channel_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
-                (guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at),
+                (guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at, channel_name),
             )
             event_id = int(cur.lastrowid)
 
@@ -114,6 +117,34 @@ class EventStore:
                 description=r[6],
                 created_by=r[7],
                 expires_at=r[8],
+                channel_name=r[9],
+            )
+            for r in rows
+        ]
+    
+    def fetch_expired_events(self, now_iso: str) -> list[Event]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at, channel_name
+                FROM events
+                WHERE expires_at <= ?;
+                """,
+                (now_iso,),
+            ).fetchall()
+
+        return [
+            Event(
+                id=r[0],
+                guild_id=r[1],
+                channel_id=r[2],
+                title=r[3],
+                start_iso=r[4],
+                end_iso=r[5],
+                description=r[6],
+                created_by=r[7],
+                expires_at=r[8],
+                channel_name=r[9],
             )
             for r in rows
         ]

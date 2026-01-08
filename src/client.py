@@ -5,6 +5,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
+from src.channel import delete_text_channel_by_name
 from src.event_storage import EventStore
 
 
@@ -32,12 +33,38 @@ class MyClient(discord.Client):
 
     async def _cleanup_loop(self):
         interval = 10 if self.mode == "test" else 60
+
         while True:
             try:
-                deleted = self.store.delete_expired(self.now_time().isoformat())
-                if deleted:
-                    print(f"[cleanup] deleted {deleted} expired events at {self.now_time().isoformat()}")
+                now_iso = self.now_time().isoformat()
+
+                expired = self.store.fetch_expired_events(now_iso)
+
+                for ev in expired:
+                    if not ev.channel_name:
+                        continue
+
+                    guild = self.get_guild(int(ev.guild_id))
+                    if guild is None:
+                        continue
+
+                    try:
+                        deleted = await delete_text_channel_by_name(
+                            guild=guild,
+                            channel_name=ev.channel_name,
+                            reason=f"Event expired (id={ev.id})",
+                        )
+                        if deleted:
+                            print(f"[cleanup] deleted channel #{ev.channel_name} for event {ev.id}")
+                    except Exception as e:
+                        print(f"[cleanup] failed to delete channel #{ev.channel_name} for event {ev.id}: {e}")
+
+                deleted_rows = self.store.delete_expired(now_iso)
+                if deleted_rows:
+                    print(f"[cleanup] deleted {deleted_rows} expired events from db")
+
                 await asyncio.sleep(interval)
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
