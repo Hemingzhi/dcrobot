@@ -81,6 +81,7 @@ class EventStore:
             end_iso=end_iso,
             description=description,
             created_by=created_by,
+            expires_at=expires_at
         )
 
     def delete_expired(self, now_iso: str) -> int:
