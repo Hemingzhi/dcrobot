@@ -20,3 +20,6 @@ Thumbs.db
 
 # Credentials
 config.yaml
+
+# database file
+events.db

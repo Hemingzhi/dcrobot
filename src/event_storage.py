@@ -16,6 +16,7 @@ class Event:
     end_iso: Optional[str]
     description: Optional[str]
     created_by: int
+    expires_at: str
 
 
 class EventStore:

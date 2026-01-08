@@ -40,7 +40,8 @@ class MyClient(discord.Client):
         self._cleanup_task: asyncio.Task | None = None
 
     async def setup_hook(self):
-        await self.tree.sync()
+        synced = await self.tree.sync()
+        print(f"[sync] synced {len(synced)} commands: {[c.name for c in synced]}")
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
     async def close(self):
