@@ -22,4 +22,4 @@ Thumbs.db
 config.yaml
 
 # database file
-events.db
+events.*

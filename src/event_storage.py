@@ -98,7 +98,7 @@ class EventStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at
+                SELECT id, guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at, channel_name
                 FROM events
                 WHERE guild_id = ? AND channel_id = ? AND expires_at > ?
                 ORDER BY start_iso ASC
