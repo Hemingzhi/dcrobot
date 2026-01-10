@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import discord
 from discord import app_commands
 
-from src.channel import create_text_channel
+from src.channel import create_text_channel, get_or_create_category
 from src.restrictions import only_in_channel_id
 
 
@@ -14,8 +14,27 @@ def _parse_dt(dt_str: str, tzinfo) -> datetime:
 def register_create(group: app_commands.Group, client):
     allowed_id = int(client.config["restrictions"]["event_create_channel_id"])
 
+    async def category_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ):
+        if interaction.guild is None:
+            return []
+
+        db_names = client.store.list_category_options(guild_id=interaction.guild.id, limit=25)
+
+        guild_names = [c.name for c in interaction.guild.categories]
+
+        names = sorted(set(db_names + guild_names))
+
+        cur = (current or "").lower()
+        matched = [n for n in names if cur in n.lower()][:25]
+
+        return [app_commands.Choice(name=n, value=n) for n in matched]
+
     @group.command(name="create", description="Create a new event")
     @only_in_channel_id(allowed_id)
+    @app_commands.autocomplete(category=category_autocomplete)
     @app_commands.describe(
         title="Event title",
         start="Start time (YYYY-MM-DD HH:MM, local time)",
@@ -24,6 +43,7 @@ def register_create(group: app_commands.Group, client):
         create_channel="Create a dedicated text channel",
         channel_name="New channel name (optional)",
         member_limit="Max participants (optional)",
+        category="Category name for the created channel (optional, can be new)",
     )
     async def create(
         interaction: discord.Interaction,
@@ -34,6 +54,7 @@ def register_create(group: app_commands.Group, client):
         create_channel: bool = False,
         channel_name: str | None = None,
         member_limit: int | None = None,
+        category: str | None = None,
     ):
         if interaction.guild is None or interaction.channel is None:
             await interaction.response.send_message(
@@ -80,18 +101,47 @@ def register_create(group: app_commands.Group, client):
         )
 
         created_channel = None
+        used_category_name = None
+
         if create_channel:
             member = interaction.user if isinstance(interaction.user, discord.Member) else None
             if member is None:
                 await interaction.response.send_message("Cannot resolve member.", ephemeral=True)
                 return
 
-            created_channel = await create_text_channel(
-                guild=interaction.guild,
-                requester=member,
-                name=(channel_name.strip() if channel_name else title),
-                topic=description,
-            )
+            cat_obj = None
+            if category and category.strip():
+                used_category_name = category.strip()
+                try:
+                    cat_obj = await get_or_create_category(guild=interaction.guild, name=used_category_name)
+                    client.store.add_category_option(guild_id=interaction.guild.id, name=used_category_name)
+                except PermissionError:
+                    await interaction.response.send_message(
+                        "I don't have permission to create categories/channels. Please grant me **Manage Channels**.",
+                        ephemeral=True,
+                    )
+                    return
+                except Exception as e:
+                    await interaction.response.send_message(f"Failed to prepare category: {e}", ephemeral=True)
+                    return
+
+            try:
+                created_channel = await create_text_channel(
+                    guild=interaction.guild,
+                    requester=member,
+                    name=(channel_name.strip() if channel_name else title),
+                    category=cat_obj,
+                    topic=description,
+                )
+            except PermissionError:
+                await interaction.response.send_message(
+                    "I don't have permission to create channels. Please grant me **Manage Channels**.",
+                    ephemeral=True,
+                )
+                return
+            except Exception as e:
+                await interaction.response.send_message(f"Failed to create channel: {e}", ephemeral=True)
+                return
 
         ev = client.store.create_event(
             guild_id=interaction.guild.id,
@@ -121,6 +171,9 @@ def register_create(group: app_commands.Group, client):
             inline=False,
         )
         embed.add_field(name="Channel", value=display_channel.mention, inline=False)
+
+        if used_category_name:
+            embed.add_field(name="Category", value=used_category_name, inline=True)
 
         if member_limit is not None:
             embed.add_field(name="Max participants", value=str(member_limit), inline=True)

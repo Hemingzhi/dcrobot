@@ -15,7 +15,7 @@ async def create_text_channel(
     guild: discord.Guild,
     requester: discord.Member,
     name: str,
-    category_name: str | None = None,
+    category: discord.CategoryChannel | None = None,
     topic: str | None = None,
 ) -> discord.TextChannel:
     me = guild.me
@@ -30,10 +30,6 @@ async def create_text_channel(
     existing = discord.utils.get(guild.text_channels, name=channel_name)
     if existing:
         return existing
-
-    category = None
-    if category_name:
-        category = discord.utils.get(guild.categories, name=category_name)
 
     channel = await guild.create_text_channel(
         name=channel_name,

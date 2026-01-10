@@ -8,15 +8,15 @@ from typing import List
 class Event:
     id: int
     guild_id: int
-    channel_id: int          
+    channel_id: int
     title: str
     start_iso: str
     end_iso: str | None
     description: str | None
     created_by: int
     expires_at: str
-    channel_name: str | None 
-    member_limit: int | None  
+    channel_name: str | None
+    member_limit: int | None
 
 class EventStore:
     def __init__(self, db_path: Path):
@@ -45,7 +45,46 @@ class EventStore:
                 );
                 """
             )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS event_category_options (
+                    guild_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, name)
+                );
+                """
+            )
             conn.commit()
+
+    def list_category_options(self, *, guild_id: int, limit: int = 25) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT name
+                FROM event_category_options
+                WHERE guild_id = ?
+                ORDER BY name ASC
+                LIMIT ?;
+                """,
+                (guild_id, limit),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def add_category_option(self, *, guild_id: int, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO event_category_options (guild_id, name)
+                VALUES (?, ?);
+                """,
+                (guild_id, name),
+            )
+            conn.commit()
+
 
     def create_event(
         self,
