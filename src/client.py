@@ -5,7 +5,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
-from src.channel import delete_text_channel_by_name
+from src.channel import delete_channel_by_name
 from src.event_storage import EventStore
 
 
@@ -56,7 +56,7 @@ class MyClient(discord.Client):
                         continue
 
                     try:
-                        deleted = await delete_text_channel_by_name(
+                        deleted = await delete_channel_by_name(
                             guild=guild,
                             channel_name=ev.channel_name,
                             reason=f"Event expired (id={ev.id})",

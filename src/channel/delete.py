@@ -1,6 +1,6 @@
 import discord
 
-async def delete_text_channel_by_name(
+async def delete_channel_by_name(
     *,
     guild: discord.Guild,
     channel_name: str,
@@ -13,7 +13,11 @@ async def delete_text_channel_by_name(
     if not channel_name:
         return False
 
-    channel = discord.utils.get(guild.text_channels, name=channel_name)
+    channel = (
+        discord.utils.get(guild.text_channels, name=channel_name)
+        or discord.utils.get(guild.voice_channels, name=channel_name)
+    )
+
     if channel is None:
         return False
 
