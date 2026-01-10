@@ -6,3 +6,9 @@ app:
 
 welcome:
   channel_name: # any name
+
+event:
+  event_create_channel_name: # any name
+
+time:
+  default_tz: "Europe/Paris"
