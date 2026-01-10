@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 
 from src.channel import create_text_channel, get_or_create_category
-from src.restrictions import only_in_channel_id
+from src.restrictions import only_in_event_create_channel
 
 
 def _parse_dt(dt_str: str, tzinfo) -> datetime:
@@ -12,7 +12,6 @@ def _parse_dt(dt_str: str, tzinfo) -> datetime:
 
 
 def register_create(group: app_commands.Group, client):
-    allowed_id = int(client.config["restrictions"]["event_create_channel_id"])
 
     async def category_autocomplete(
         interaction: discord.Interaction,
@@ -33,7 +32,7 @@ def register_create(group: app_commands.Group, client):
         return [app_commands.Choice(name=n, value=n) for n in matched]
 
     @group.command(name="create", description="Create a new event")
-    @only_in_channel_id(allowed_id)
+    @only_in_event_create_channel(client)
     @app_commands.autocomplete(category=category_autocomplete)
     @app_commands.describe(
         title="Event title",
@@ -66,6 +65,13 @@ def register_create(group: app_commands.Group, client):
         title = title.strip()
         if len(title) < 2:
             await interaction.response.send_message("Title too short.", ephemeral=True)
+            return
+        
+        if not create_channel and category:
+            await interaction.response.send_message(
+                "category is only used when create_channel=true.",
+                ephemeral=True,
+            )
             return
 
         if member_limit is not None and (member_limit < 1 or member_limit > 500):

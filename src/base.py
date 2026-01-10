@@ -32,4 +32,4 @@ def register_base_events(client, config: dict):
             return
 
         if message.content.strip().lower() == "ping":
-            await message.channel.send("爱你哦（仅用于测试）")
+            await message.channel.send("爱你哦 :kissing_heart:")
