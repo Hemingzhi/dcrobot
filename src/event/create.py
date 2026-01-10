@@ -203,3 +203,5 @@ def register_create(group: app_commands.Group, client):
             await created_channel.send(embed=embed, view=view)
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.channel.send(embed=embed, view=view)
+
