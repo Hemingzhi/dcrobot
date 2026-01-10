@@ -1,37 +1,32 @@
-from __future__ import annotations
-
-import sqlite3
 from dataclasses import dataclass
+import sqlite3
 from pathlib import Path
-from typing import Optional, List
+from typing import List
 
 
-@dataclass(frozen=True)
+@dataclass
 class Event:
     id: int
     guild_id: int
-    channel_id: int
+    channel_id: int          
     title: str
     start_iso: str
-    end_iso: Optional[str]
-    description: Optional[str]
+    end_iso: str | None
+    description: str | None
     created_by: int
     expires_at: str
-    channel_name: str | None
-
+    channel_name: str | None 
+    member_limit: int | None  
 
 class EventStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA foreign_keys=ON;")
-        return conn
+    def _connect(self):
+        return sqlite3.connect(self.db_path)
 
-    def _init_db(self) -> None:
+    def _init_db(self):
         with self._connect() as conn:
             conn.execute(
                 """
@@ -46,11 +41,11 @@ class EventStore:
                     created_by INTEGER NOT NULL,
                     expires_at TEXT NOT NULL,
                     channel_name TEXT,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    member_limit INTEGER
                 );
                 """
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_expires_at ON events(expires_at);")
+            conn.commit()
 
     def create_event(
         self,
@@ -59,21 +54,37 @@ class EventStore:
         channel_id: int,
         title: str,
         start_iso: str,
-        end_iso: Optional[str],
-        description: Optional[str],
+        end_iso: str | None,
+        description: str | None,
         created_by: int,
         expires_at: str,
-        channel_name: str | None = None,
+        channel_name: str | None,
+        member_limit: int | None,
     ) -> Event:
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO events (guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at, channel_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO events (
+                    guild_id, channel_id, title, start_iso, end_iso,
+                    description, created_by, expires_at, channel_name, member_limit
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at, channel_name),
+                (
+                    guild_id,
+                    channel_id,
+                    title,
+                    start_iso,
+                    end_iso,
+                    description,
+                    created_by,
+                    expires_at,
+                    channel_name,
+                    member_limit,
+                ),
             )
-            event_id = int(cur.lastrowid)
+            conn.commit()
+            event_id = cur.lastrowid
 
         return Event(
             id=event_id,
@@ -85,22 +96,27 @@ class EventStore:
             description=description,
             created_by=created_by,
             expires_at=expires_at,
-            channel_name=channel_name
+            channel_name=channel_name,
+            member_limit=member_limit,
         )
 
-    def delete_expired(self, now_iso: str) -> int:
-        """Delete expired events. Return number of deleted rows."""
-        with self._connect() as conn:
-            cur = conn.execute("DELETE FROM events WHERE expires_at <= ?;", (now_iso,))
-            return int(cur.rowcount)
-        
-    def list_active_events(self, *, guild_id: int, channel_id: int, now_iso: str, limit: int = 20) -> list[Event]:
+    def list_active_events(
+        self,
+        *,
+        guild_id: int,
+        channel_id: int,
+        now_iso: str,
+        limit: int = 20,
+    ) -> List[Event]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at, channel_name
+                SELECT id, guild_id, channel_id, title, start_iso, end_iso,
+                       description, created_by, expires_at, channel_name, member_limit
                 FROM events
-                WHERE guild_id = ? AND channel_id = ? AND expires_at > ?
+                WHERE guild_id = ?
+                  AND channel_id = ?
+                  AND expires_at > ?
                 ORDER BY start_iso ASC
                 LIMIT ?;
                 """,
@@ -119,15 +135,17 @@ class EventStore:
                 created_by=r[7],
                 expires_at=r[8],
                 channel_name=r[9],
+                member_limit=r[10],
             )
             for r in rows
         ]
-    
-    def fetch_expired_events(self, now_iso: str) -> list[Event]:
+
+    def fetch_expired_events(self, now_iso: str) -> List[Event]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, guild_id, channel_id, title, start_iso, end_iso, description, created_by, expires_at, channel_name
+                SELECT id, guild_id, channel_id, title, start_iso, end_iso,
+                       description, created_by, expires_at, channel_name, member_limit
                 FROM events
                 WHERE expires_at <= ?;
                 """,
@@ -146,6 +164,16 @@ class EventStore:
                 created_by=r[7],
                 expires_at=r[8],
                 channel_name=r[9],
+                member_limit=r[10],
             )
             for r in rows
         ]
+
+    def delete_expired(self, now_iso: str) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM events WHERE expires_at <= ?;",
+                (now_iso,),
+            )
+            conn.commit()
+            return cur.rowcount
