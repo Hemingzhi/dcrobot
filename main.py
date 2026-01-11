@@ -8,6 +8,7 @@ from src.base import register_base_events
 from src.client import MyClient
 from src.config_loading import load_config
 from src.event import register_event_commands
+from src.category import register_category_commands
 
 
 def main():
@@ -36,6 +37,7 @@ def main():
     )
 
     register_event_commands(client.tree, client)
+    register_category_commands(client.tree, client)  
     register_base_events(client, config)
 
     @client.event

@@ -258,3 +258,50 @@ class EventStore:
             )
             for r in rows
         ]
+    
+    def list_all_category_options(self, *, guild_id: int, limit: int = 200) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT name
+                FROM event_category_options
+                WHERE guild_id = ?
+                ORDER BY name ASC
+                LIMIT ?;
+                """,
+                (guild_id, limit),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+
+    def has_category_option(self, *, guild_id: int, name: str) -> bool:
+        name = (name or "").strip()
+        if not name:
+            return False
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM event_category_options
+                WHERE guild_id = ? AND name = ?
+                LIMIT 1;
+                """,
+                (guild_id, name),
+            ).fetchone()
+        return row is not None
+
+
+    def delete_category_option(self, *, guild_id: int, name: str) -> int:
+        name = (name or "").strip()
+        if not name:
+            return 0
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM event_category_options
+                WHERE guild_id = ? AND name = ?;
+                """,
+                (guild_id, name),
+            )
+            conn.commit()
+            return cur.rowcount

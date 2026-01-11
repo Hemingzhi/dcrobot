@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 
 import discord
 from discord import app_commands
 
-from src.channel import create_text_channel, create_voice_channel, get_or_create_category
+from src.channel import create_text_channel, create_voice_channel
 from src.restrictions import only_in_event_create_channel
 
 
@@ -16,9 +18,10 @@ def register_create(group: app_commands.Group, client):
         if interaction.guild is None:
             return []
 
-        db_names = client.store.list_category_options(guild_id=interaction.guild.id, limit=25)
-        guild_names = [c.name for c in interaction.guild.categories]
-        names = sorted(set(db_names + guild_names))
+        if not hasattr(client.store, "list_all_category_options"):
+            names = client.store.list_category_options(guild_id=interaction.guild.id, limit=200)
+        else:
+            names = client.store.list_all_category_options(guild_id=interaction.guild.id, limit=200)
 
         cur = (current or "").lower()
         matched = [n for n in names if cur in n.lower()][:25]
@@ -38,19 +41,19 @@ def register_create(group: app_commands.Group, client):
         start="Start time (YYYY-MM-DD HH:MM, local time)",
         end="End time (optional)",
         description="Optional description",
-        create_channel="Create a dedicated channel for this event",
-        channel_type="Channel type: text or voice (default: text)",
-        channel_name="New channel name (optional). If empty, it uses the title",
-        member_limit="Max participants (optional). For voice channel: user limit",
-        category="Category name for the created channel (optional, can be new)",
+        create_channel="Create a dedicated channel for this event (required)",
+        channel_type="Channel type: text or voice (default: text). Only when create_channel=true",
+        channel_name="New channel name (optional). Only when create_channel=true",
+        member_limit="Max participants (optional). For voice channel: user limit. Only when create_channel=true",
+        category="Existing category name (required when create_channel=true)",
     )
     async def create(
         interaction: discord.Interaction,
         title: str,
         start: str,
+        create_channel: bool,
         end: str | None = None,
         description: str | None = None,
-        create_channel: bool = False,
         channel_type: str = "text",
         channel_name: str | None = None,
         member_limit: int | None = None,
@@ -74,12 +77,13 @@ def register_create(group: app_commands.Group, client):
             await interaction.response.send_message("channel_type must be 'text' or 'voice'.", ephemeral=True)
             return
 
-        if not create_channel and (category or channel_name or channel_type != "text" or member_limit is not None):
-            await interaction.response.send_message(
-                "category/channel_name/channel_type/member_limit are only used when create_channel=true.",
-                ephemeral=True,
-            )
-            return
+        if not create_channel:
+            if category or channel_name or channel_type != "text" or member_limit is not None:
+                await interaction.response.send_message(
+                    "When create_channel=false, you cannot use category/channel_name/channel_type/member_limit.",
+                    ephemeral=True,
+                )
+                return
 
         try:
             tzinfo = client.now_time().tzinfo
@@ -93,32 +97,53 @@ def register_create(group: app_commands.Group, client):
             await interaction.response.send_message("End time must be after start time.", ephemeral=True)
             return
 
-        expires_dt = end_dt if end_dt else start_dt + (timedelta(minutes=10) if client.mode == "test" else timedelta(days=7))
+        expires_dt = (
+            end_dt
+            if end_dt
+            else start_dt + (timedelta(minutes=10) if client.mode == "test" else timedelta(days=7))
+        )
 
-        created_channel = None
-        used_category_name = None
+        created_channel: discord.abc.GuildChannel | None = None
+        used_category_name: str | None = None
 
         if create_channel:
+            category = (category or "").strip()
+            if not category:
+                await interaction.response.send_message("category is required when create_channel=true.", ephemeral=True)
+                return
+
+            if hasattr(client.store, "has_category_option"):
+                ok = client.store.has_category_option(guild_id=interaction.guild.id, name=category)
+            else:
+                if hasattr(client.store, "list_all_category_options"):
+                    names = client.store.list_all_category_options(guild_id=interaction.guild.id, limit=500)
+                else:
+                    names = client.store.list_category_options(guild_id=interaction.guild.id, limit=500)
+                ok = category in set(names)
+
+            if not ok:
+                await interaction.response.send_message(
+                    f"Unknown category: **{category}**.\n"
+                    f"Please create it first with `/category create`.",
+                    ephemeral=True,
+                )
+                return
+
+            cat_obj = discord.utils.get(interaction.guild.categories, name=category)
+            if cat_obj is None:
+                await interaction.response.send_message(
+                    f"Discord category **{category}** does not exist.\n"
+                    f"Please create it using `/category create`.",
+                    ephemeral=True,
+                )
+                return
+
+            used_category_name = category
+
             member = interaction.user if isinstance(interaction.user, discord.Member) else None
             if member is None:
                 await interaction.response.send_message("Cannot resolve member.", ephemeral=True)
                 return
-
-            cat_obj = None
-            if category and category.strip():
-                used_category_name = category.strip()
-                try:
-                    cat_obj = await get_or_create_category(guild=interaction.guild, name=used_category_name)
-                    client.store.add_category_option(guild_id=interaction.guild.id, name=used_category_name)
-                except PermissionError:
-                    await interaction.response.send_message(
-                        "I don't have permission to create categories/channels. Please grant me **Manage Channels**.",
-                        ephemeral=True,
-                    )
-                    return
-                except Exception as e:
-                    await interaction.response.send_message(f"Failed to prepare category: {e}", ephemeral=True)
-                    return
 
             try:
                 final_name = channel_name.strip() if channel_name else title
@@ -149,34 +174,30 @@ def register_create(group: app_commands.Group, client):
                 await interaction.response.send_message(f"Failed to create channel: {e}", ephemeral=True)
                 return
 
+        display_channel = created_channel or interaction.channel
         ev = client.store.create_event(
             guild_id=interaction.guild.id,
-            channel_id=interaction.channel.id,
+            channel_id=display_channel.id,  # ✅ created_channel.id 或当前频道 id
             title=title,
             start_iso=start_dt.isoformat(),
             end_iso=end_dt.isoformat() if end_dt else None,
             description=description,
             created_by=interaction.user.id,
             expires_at=expires_dt.isoformat(),
-            channel_name=(created_channel.name if created_channel else None),  # 用于过期自动删除
-            member_limit=member_limit if create_channel and channel_type == "voice" else member_limit,
+            channel_name=(display_channel.name if isinstance(display_channel, discord.abc.GuildChannel) else None),
+            member_limit=member_limit,
         )
-
-        display_channel = created_channel or interaction.channel
 
         embed = discord.Embed(title=f"✅ Event created: {ev.title}")
         embed.add_field(name="Start", value=start_dt.strftime("%Y-%m-%d %H:%M"), inline=True)
         embed.add_field(name="End", value=(end_dt.strftime("%Y-%m-%d %H:%M") if end_dt else "—"), inline=True)
         embed.add_field(name="Expires", value=expires_dt.strftime("%Y-%m-%d %H:%M"), inline=False)
 
-        if created_channel:
-            embed.add_field(name="Channel", value=display_channel.mention, inline=False)
-            embed.add_field(name="Channel type", value=channel_type, inline=True)
-        else:
-            embed.add_field(name="Channel", value=interaction.channel.mention, inline=False)
+        embed.add_field(name="Channel", value=getattr(display_channel, "mention", "#unknown"), inline=False)
 
-        if used_category_name:
-            embed.add_field(name="Category", value=used_category_name, inline=True)
+        if create_channel:
+            embed.add_field(name="Channel type", value=channel_type, inline=True)
+            embed.add_field(name="Category", value=used_category_name or "—", inline=True)
 
         if member_limit is not None:
             if create_channel and channel_type == "voice":

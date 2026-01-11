@@ -77,7 +77,7 @@ def register_base_events(client, config: dict):
 
         lines = [
             f"🎉 欢迎 {member.mention} 来到 **{member.guild.name}**！",
-            "先给你三条最省时间的上手路线：",
+            "先给你最省时间的上手路线：",
             f"1) 想发起活动：输入 `{primary_cmd}`",
             f"2) 想看看今天/近期活动：输入 `{secondary_cmd}`",
         ]

@@ -16,3 +16,15 @@ event:
 
 time:
   default_tz: "Europe/Paris"
+
+ads:
+  enabled: true # 是否开启
+  channel_name: "" # 默认频道
+  hour: 9
+  minute: 0
+  blessing: "祝你今天少踩坑，多出结果。" # 随机祝福语。 TODO：设置成list，或者引入AI
+
+category:
+  purge:
+    allowed_role_ids: [] # Delete category
+    allowed_user_ids: []
