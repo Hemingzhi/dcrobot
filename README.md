@@ -114,7 +114,7 @@ Activate venv and install dependencies:
 
 
 ```bash
-source .venv/bin/activate
+source .venv/Scripts/activate
 pip install -r requirements.txt
 ```
 
@@ -122,7 +122,7 @@ pip install -r requirements.txt
 
 ## 🔐 Configuration (`config.yaml`)
 
-Copy config_default.yaml to config.yaml and modify if
+Copy config_default.yaml to config.yaml and modify it
 
 ---
 
