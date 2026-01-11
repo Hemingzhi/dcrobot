@@ -6,6 +6,7 @@ from src.category.create import register_category_create
 from src.category.delete import register_category_delete
 from src.category.list import register_category_list
 from src.category.purge import register_category_purge
+from src.category.sync import register_category_sync
 
 def register_category_commands(tree: app_commands.CommandTree, client) -> None:
     category_group = app_commands.Group(name="category", description="Manage categories")
@@ -15,6 +16,6 @@ def register_category_commands(tree: app_commands.CommandTree, client) -> None:
     register_category_list(category_group, client)
     register_category_delete(category_group, client)
     register_category_purge(category_group, client)
-
+    register_category_sync(category_group, client)
 
 __all__ = ["register_category_commands"]
