@@ -216,3 +216,45 @@ class EventStore:
             )
             conn.commit()
             return cur.rowcount
+
+    def list_events_for_day(
+        self,
+        *,
+        guild_id: int,
+        day_start_iso: str,
+        day_end_iso: str,
+        now_iso: str,
+        limit: int = 50,
+    ) -> List[Event]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, guild_id, channel_id, title, start_iso, end_iso,
+                       description, created_by, expires_at, channel_name, member_limit
+                FROM events
+                WHERE guild_id = ?
+                  AND expires_at > ?
+                  AND start_iso >= ?
+                  AND start_iso < ?
+                ORDER BY start_iso ASC
+                LIMIT ?;
+                """,
+                (guild_id, now_iso, day_start_iso, day_end_iso, limit),
+            ).fetchall()
+
+        return [
+            Event(
+                id=r[0],
+                guild_id=r[1],
+                channel_id=r[2],
+                title=r[3],
+                start_iso=r[4],
+                end_iso=r[5],
+                description=r[6],
+                created_by=r[7],
+                expires_at=r[8],
+                channel_name=r[9],
+                member_limit=r[10],
+            )
+            for r in rows
+        ]
