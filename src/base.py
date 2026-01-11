@@ -66,18 +66,54 @@ def register_base_events(client, config: dict):
             print("[welcome] no permission to send messages")
             return
 
-        await channel.send(
-            f"欢迎 {member.mention} 加入 🎉\n"
-            f"输入 `/event create` 可以创建活动。"
-        )
+        wcfg = config.get("welcome", {})
+        primary_cmd = wcfg.get("primary_command") or "/event create"
+        secondary_cmd = wcfg.get("secondary_command") or "/event list"
+        # rules_name = (wcfg.get("rules_channel_name") or "").strip()
+        # intro_name = (wcfg.get("intro_channel_name") or "").strip()
+
+        # rules_ch = discord.utils.get(member.guild.text_channels, name=rules_name) if rules_name else None
+        # intro_ch = discord.utils.get(member.guild.text_channels, name=intro_name) if intro_name else None
+
+        lines = [
+            f"🎉 欢迎 {member.mention} 来到 **{member.guild.name}**！",
+            "先给你三条最省时间的上手路线：",
+            f"1) 想发起活动：输入 `{primary_cmd}`",
+            f"2) 想看看今天/近期活动：输入 `{secondary_cmd}`",
+        ]
+
+        # if rules_ch is not None:
+        #     lines.append(f"3) 先看一下规则：{rules_ch.mention}")
+
+        # if intro_ch is not None:
+        #     lines.append(f"🙌 想认识大家可以去 {intro_ch.mention} 打个招呼～")
+
+        lines.append("需要帮助就直接 @我，我不咬人（最多发日志）。")
+
+        await channel.send("\n".join(lines))
+
 
     @client.event
     async def on_message(message: discord.Message):
         if message.author.bot:
             return
 
-        if message.content.strip().lower() == "ping":
-            await message.channel.send("爱你哦 :kissing_heart:")
+        content = (message.content or "").strip().lower()
+
+        if content in {"ping", "p", "!ping"}:
+            wcfg = config.get("welcome", {})
+            primary_cmd = wcfg.get("primary_command") or "/event create"
+            secondary_cmd = wcfg.get("secondary_command") or "/event list"
+
+            await message.channel.send(
+                "🏓 pong！爱你呦。\n"
+                f"快速入口：`{primary_cmd}`（创建活动） / `{secondary_cmd}`（查看活动）"
+            )
+            return
+
+        if content in {"早安", "早", "good morning"}:
+            await message.channel.send("☀️ 早！今天也要把生活都跑通。")
+            return
 
     # ===== Daily ads loop =====
     def _build_ads_message(guild: discord.Guild, now: datetime, events) -> str:

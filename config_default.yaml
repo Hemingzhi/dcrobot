@@ -6,6 +6,10 @@ app:
 
 welcome:
   channel_name: # any name
+  primary_command: ""
+  # secondary_command: ""
+  # rules_channel_name: ""      # 可选：有就提示新人先看
+  # intro_channel_name: ""      # 可选：自我介绍频道
 
 event:
   event_create_channel_name: # any name
