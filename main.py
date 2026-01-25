@@ -9,6 +9,8 @@ from src.client import MyClient
 from src.config_loading import load_config
 from src.event import register_event_commands
 from src.category import register_category_commands
+from src.reminder import register_reminder_commands
+
 
 
 def main():
@@ -36,8 +38,12 @@ def main():
         config=config,
     )
 
+    # Event Commands
     register_event_commands(client.tree, client)
+    # Category Commands
     register_category_commands(client.tree, client)  
+    # Reminder Commands
+    register_reminder_commands(client.tree, client)
     register_base_events(client, config)
 
     @client.event
