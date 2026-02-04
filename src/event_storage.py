@@ -1,7 +1,15 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import sqlite3
 from pathlib import Path
 from typing import List
+
+
+def _utc_iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
 
 @dataclass
 class Event:
@@ -21,6 +29,29 @@ class Event:
     reminded: int = 0
     remind_in_channel: int = 1
 
+
+@dataclass
+class MultimediaItem:
+    id: int
+    guild_id: int
+    media_type: str
+    title: str
+    provider_user_id: int
+    created_at: str
+
+
+@dataclass
+class MultimediaView:
+    id: int
+    guild_id: int
+    item_id: int
+    viewer_user_id: int
+    watched: int
+    watched_at: str | None
+    review: str | None
+    created_at: str
+
+
 class EventStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -31,6 +62,7 @@ class EventStore:
 
     def _init_db(self):
         with self._connect() as conn:
+            # --- events ---
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS events (
@@ -49,23 +81,18 @@ class EventStore:
                 """
             )
 
-            existing_cols = {
-                r[1] for r in conn.execute("PRAGMA table_info(events);").fetchall()
-            }
+            existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(events);").fetchall()}
 
             if "remind_at_iso" not in existing_cols:
                 conn.execute("ALTER TABLE events ADD COLUMN remind_at_iso TEXT;")
 
             if "reminded" not in existing_cols:
-                conn.execute(
-                    "ALTER TABLE events ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0;"
-                )
+                conn.execute("ALTER TABLE events ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0;")
 
             if "remind_in_channel" not in existing_cols:
-                conn.execute(
-                    "ALTER TABLE events ADD COLUMN remind_in_channel INTEGER NOT NULL DEFAULT 1;"
-                )
+                conn.execute("ALTER TABLE events ADD COLUMN remind_in_channel INTEGER NOT NULL DEFAULT 1;")
 
+            # --- category options ---
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS event_category_options (
@@ -76,8 +103,74 @@ class EventStore:
                 """
             )
 
+            # --- multimedia items (catalog) ---
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS multimedia_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+
+                    media_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+
+                    provider_user_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+
+                    UNIQUE (guild_id, media_type, title)
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_mm_items_guild_type
+                ON multimedia_items(guild_id, media_type);
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_mm_items_guild_created
+                ON multimedia_items(guild_id, created_at);
+                """
+            )
+
+            # --- multimedia views (per-user state) --- (NO FK)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS multimedia_views (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                    guild_id INTEGER NOT NULL,
+                    item_id INTEGER NOT NULL,          -- logical ref to multimedia_items.id
+                    viewer_user_id INTEGER NOT NULL,
+
+                    watched INTEGER NOT NULL DEFAULT 0,
+                    watched_at TEXT,
+                    review TEXT,
+
+                    created_at TEXT NOT NULL,
+
+                    UNIQUE (guild_id, item_id, viewer_user_id)
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_mm_views_guild_item
+                ON multimedia_views(guild_id, item_id);
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_mm_views_guild_viewer
+                ON multimedia_views(guild_id, viewer_user_id);
+                """
+            )
+
             conn.commit()
 
+    # -----------------------
+    # category options
+    # -----------------------
     def list_category_options(self, *, guild_id: int, limit: int = 25) -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -144,13 +237,16 @@ class EventStore:
             cur = conn.execute(
                 """
                 DELETE FROM event_category_options
-                WHERE guild_id = ? AND name = ?;
+                WHERE guild_id = ? AND name = ?
                 """,
                 (guild_id, name),
             )
             conn.commit()
             return cur.rowcount
 
+    # -----------------------
+    # events
+    # -----------------------
     def create_event(
         self,
         *,
@@ -223,7 +319,7 @@ class EventStore:
                   AND channel_id = ?
                   AND expires_at > ?
                 ORDER BY start_iso ASC
-                LIMIT ?;
+                LIMIT ?
                 """,
                 (guild_id, channel_id, now_iso, limit),
             ).fetchall()
@@ -269,7 +365,7 @@ class EventStore:
                   AND start_iso >= ?
                   AND start_iso < ?
                 ORDER BY start_iso ASC
-                LIMIT ?;
+                LIMIT ?
                 """,
                 (guild_id, now_iso, day_start_iso, day_end_iso, limit),
             ).fetchall()
@@ -302,7 +398,7 @@ class EventStore:
                        description, created_by, expires_at, channel_name, member_limit,
                        remind_at_iso, reminded, remind_in_channel
                 FROM events
-                WHERE expires_at <= ?;
+                WHERE expires_at <= ?
                 """,
                 (now_iso,),
             ).fetchall()
@@ -329,10 +425,7 @@ class EventStore:
 
     def delete_expired(self, now_iso: str) -> int:
         with self._connect() as conn:
-            cur = conn.execute(
-                "DELETE FROM events WHERE expires_at <= ?;",
-                (now_iso,),
-            )
+            cur = conn.execute("DELETE FROM events WHERE expires_at <= ?;", (now_iso,))
             conn.commit()
             return cur.rowcount
 
@@ -348,7 +441,7 @@ class EventStore:
                 """
                 UPDATE events
                 SET remind_at_iso = ?, reminded = 0, remind_in_channel = ?
-                WHERE id = ?;
+                WHERE id = ?
                 """,
                 (remind_at_iso, 1 if remind_in_channel else 0, event_id),
             )
@@ -373,7 +466,7 @@ class EventStore:
                   AND remind_at_iso <= ?
                   AND expires_at > ?
                 ORDER BY remind_at_iso ASC
-                LIMIT ?;
+                LIMIT ?
                 """,
                 (now_iso, now_iso, limit),
             ).fetchall()
@@ -400,10 +493,7 @@ class EventStore:
 
     def mark_event_reminded(self, *, event_id: int) -> int:
         with self._connect() as conn:
-            cur = conn.execute(
-                "UPDATE events SET reminded = 1 WHERE id = ?;",
-                (event_id,),
-            )
+            cur = conn.execute("UPDATE events SET reminded = 1 WHERE id = ?;", (event_id,))
             conn.commit()
             return cur.rowcount
 
@@ -479,6 +569,338 @@ class EventStore:
                 start_iso=r[4], end_iso=r[5], description=r[6], created_by=r[7],
                 expires_at=r[8], channel_name=r[9], member_limit=r[10],
                 remind_at_iso=r[11], reminded=r[12], remind_in_channel=r[13],
+            )
+            for r in rows
+        ]
+
+    def get_multimedia_item_by_key(self, *, guild_id: int, media_type: str, title: str) -> MultimediaItem | None:
+        media_type = (media_type or "").strip().lower()
+        title = (title or "").strip()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, guild_id, media_type, title, provider_user_id, created_at
+                FROM multimedia_items
+                WHERE guild_id = ? AND media_type = ? AND title = ?
+                LIMIT 1;
+                """,
+                (guild_id, media_type, title),
+            ).fetchone()
+        if row is None:
+            return None
+        return MultimediaItem(
+            id=row[0],
+            guild_id=row[1],
+            media_type=row[2],
+            title=row[3],
+            provider_user_id=row[4],
+            created_at=row[5],
+        )
+
+    def get_multimedia_item_by_id(self, *, guild_id: int, item_id: int) -> MultimediaItem | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, guild_id, media_type, title, provider_user_id, created_at
+                FROM multimedia_items
+                WHERE guild_id = ? AND id = ?
+                LIMIT 1;
+                """,
+                (guild_id, int(item_id)),
+            ).fetchone()
+        if row is None:
+            return None
+        return MultimediaItem(
+            id=row[0],
+            guild_id=row[1],
+            media_type=row[2],
+            title=row[3],
+            provider_user_id=row[4],
+            created_at=row[5],
+        )
+
+    def create_or_get_multimedia_item(
+        self,
+        *,
+        guild_id: int,
+        provider_user_id: int,
+        media_type: str,
+        title: str,
+        created_at: str | None = None,
+    ) -> tuple[MultimediaItem, bool]:
+        """
+        Returns (item, created_new)
+        """
+        created_at = created_at or _utc_iso_now()
+        media_type = (media_type or "").strip().lower()
+        title = (title or "").strip()
+
+        existing = self.get_multimedia_item_by_key(guild_id=guild_id, media_type=media_type, title=title)
+        if existing is not None:
+            return existing, False
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO multimedia_items (
+                    guild_id, media_type, title, provider_user_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?);
+                """,
+                (guild_id, media_type, title, provider_user_id, created_at),
+            )
+            conn.commit()
+            item_id = cur.lastrowid
+
+        return (
+            MultimediaItem(
+                id=item_id,
+                guild_id=guild_id,
+                media_type=media_type,
+                title=title,
+                provider_user_id=provider_user_id,
+                created_at=created_at,
+            ),
+            True,
+        )
+
+    def list_multimedia_items(
+        self,
+        *,
+        guild_id: int,
+        media_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[MultimediaItem]:
+        where = ["guild_id = ?"]
+        params: list[object] = [guild_id]
+
+        if media_type:
+            where.append("media_type = ?")
+            params.append(media_type.strip().lower())
+
+        params.extend([int(limit), int(offset)])
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, guild_id, media_type, title, provider_user_id, created_at
+                FROM multimedia_items
+                WHERE {" AND ".join(where)}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ? OFFSET ?;
+                """,
+                params,
+            ).fetchall()
+
+        return [
+            MultimediaItem(
+                id=r[0],
+                guild_id=r[1],
+                media_type=r[2],
+                title=r[3],
+                provider_user_id=r[4],
+                created_at=r[5],
+            )
+            for r in rows
+        ]
+
+    def update_multimedia_item(
+        self,
+        *,
+        guild_id: int,
+        item_id: int,
+        media_type: str | None = None,
+        title: str | None = None,
+    ) -> int:
+        fields = []
+        values: list[object] = []
+
+        if media_type is not None:
+            fields.append("media_type = ?")
+            values.append(media_type.strip().lower())
+
+        if title is not None:
+            fields.append("title = ?")
+            values.append(title.strip())
+
+        if not fields:
+            return 0
+
+        values.extend([guild_id, int(item_id)])
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE multimedia_items
+                SET {", ".join(fields)}
+                WHERE guild_id = ? AND id = ?;
+                """,
+                values,
+            )
+            conn.commit()
+            return cur.rowcount
+
+    def delete_multimedia_item(self, *, guild_id: int, item_id: int) -> tuple[int, int]:
+        """
+        No FK: manual cascade delete.
+        Returns (deleted_views, deleted_items)
+        """
+        with self._connect() as conn:
+            cur_views = conn.execute(
+                """
+                DELETE FROM multimedia_views
+                WHERE guild_id = ? AND item_id = ?;
+                """,
+                (guild_id, int(item_id)),
+            )
+            cur_item = conn.execute(
+                """
+                DELETE FROM multimedia_items
+                WHERE guild_id = ? AND id = ?;
+                """,
+                (guild_id, int(item_id)),
+            )
+            conn.commit()
+            return cur_views.rowcount, cur_item.rowcount
+
+    def upsert_multimedia_view(
+        self,
+        *,
+        guild_id: int,
+        item_id: int,
+        viewer_user_id: int,
+        watched: int,
+        watched_at: str | None = None,
+        review: str | None = None,
+        created_at: str | None = None,
+    ) -> int:
+        created_at = created_at or _utc_iso_now()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO multimedia_views (
+                    guild_id, item_id, viewer_user_id,
+                    watched, watched_at, review, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, item_id, viewer_user_id) DO UPDATE SET
+                    watched = excluded.watched,
+                    watched_at = excluded.watched_at,
+                    review = excluded.review;
+                """,
+                (
+                    guild_id,
+                    int(item_id),
+                    int(viewer_user_id),
+                    int(watched),
+                    watched_at,
+                    review,
+                    created_at,
+                ),
+            )
+            conn.commit()
+            return cur.rowcount
+
+    def delete_multimedia_view(self, *, guild_id: int, item_id: int, viewer_user_id: int) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM multimedia_views
+                WHERE guild_id = ? AND item_id = ? AND viewer_user_id = ?;
+                """,
+                (guild_id, int(item_id), int(viewer_user_id)),
+            )
+            conn.commit()
+            return cur.rowcount
+
+    def list_my_multimedia(
+        self,
+        *,
+        guild_id: int,
+        viewer_user_id: int,
+        watched: int | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[tuple[MultimediaItem, MultimediaView]]:
+        where = ["v.guild_id = ?", "v.viewer_user_id = ?"]
+        params: list[object] = [guild_id, int(viewer_user_id)]
+
+        if watched is not None:
+            where.append("v.watched = ?")
+            params.append(int(watched))
+
+        params.extend([int(limit), int(offset)])
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    i.id, i.guild_id, i.media_type, i.title, i.provider_user_id, i.created_at,
+                    v.id, v.guild_id, v.item_id, v.viewer_user_id, v.watched, v.watched_at, v.review, v.created_at
+                FROM multimedia_views v
+                JOIN multimedia_items i
+                  ON i.id = v.item_id AND i.guild_id = v.guild_id
+                WHERE {" AND ".join(where)}
+                ORDER BY COALESCE(v.watched_at, v.created_at) DESC, v.id DESC
+                LIMIT ? OFFSET ?;
+                """,
+                params,
+            ).fetchall()
+
+        out: list[tuple[MultimediaItem, MultimediaView]] = []
+        for r in rows:
+            item = MultimediaItem(
+                id=r[0],
+                guild_id=r[1],
+                media_type=r[2],
+                title=r[3],
+                provider_user_id=r[4],
+                created_at=r[5],
+            )
+            view = MultimediaView(
+                id=r[6],
+                guild_id=r[7],
+                item_id=r[8],
+                viewer_user_id=r[9],
+                watched=r[10],
+                watched_at=r[11],
+                review=r[12],
+                created_at=r[13],
+            )
+            out.append((item, view))
+        return out
+
+    def list_multimedia_item_views(
+        self,
+        *,
+        guild_id: int,
+        item_id: int,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[MultimediaView]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, guild_id, item_id, viewer_user_id, watched, watched_at, review, created_at
+                FROM multimedia_views
+                WHERE guild_id = ? AND item_id = ?
+                ORDER BY COALESCE(watched_at, created_at) DESC, id DESC
+                LIMIT ? OFFSET ?;
+                """,
+                (guild_id, int(item_id), int(limit), int(offset)),
+            ).fetchall()
+
+        return [
+            MultimediaView(
+                id=r[0],
+                guild_id=r[1],
+                item_id=r[2],
+                viewer_user_id=r[3],
+                watched=r[4],
+                watched_at=r[5],
+                review=r[6],
+                created_at=r[7],
             )
             for r in rows
         ]
