@@ -51,6 +51,10 @@ class MultimediaView:
     review: str | None
     created_at: str
 
+@dataclass(frozen=True)
+class IdTitle:
+    id: int
+    title: str
 
 class EventStore:
     def __init__(self, db_path: Path):
@@ -904,3 +908,48 @@ class EventStore:
             )
             for r in rows
         ]
+
+    def list_multimedia_items_for_user(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        limit: int = 25,
+    ) -> list[IdTitle]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, title
+                FROM multimedia_items
+                WHERE guild_id = ? AND user_id = ?
+                ORDER BY id DESC
+                LIMIT ?;
+                """,
+                (guild_id, user_id, int(limit)),
+            ).fetchall()
+
+        return [IdTitle(id=int(r[0]), title=str(r[1])) for r in rows]
+    
+    def mark_multimedia_item_watched(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        item_id: int,
+        review: str | None,
+    ) -> bool:
+        """Mark watched=1 and persist review ('-' if empty). Returns True if updated."""
+        final_review = (review or "").strip() or "-"
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE multimedia_items
+                SET watched = 1,
+                    review = ?
+                WHERE guild_id = ? AND user_id = ? AND id = ?;
+                """,
+                (final_review, guild_id, user_id, int(item_id)),
+            )
+            conn.commit()
+            return cur.rowcount > 0
