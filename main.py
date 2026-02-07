@@ -9,6 +9,7 @@ from src.client import MyClient
 from src.config_loading import load_config
 from src.event import register_event_commands
 from src.category import register_category_commands
+from src.memo import register_memo_commands
 from src.multimedia import register_multimedia_commands
 from src.reminder import register_reminder_commands
 
@@ -47,11 +48,15 @@ def main():
     register_reminder_commands(client.tree, client)
     # Multiple Commands
     register_multimedia_commands(client.tree, client)
+    # Memo Commands
+    register_memo_commands(client.tree, client)
     # Base Components
     register_base_events(client, config)
 
     @client.event
     async def on_ready():
+        from src.memo.reminder_loop import MemoReminderLoop
+        MemoReminderLoop(client).start()
         print(
             f"Logged in as {client.user} (id: {client.user.id}) | MODE={mode} | TZ={default_tz_name}"
         )

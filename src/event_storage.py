@@ -10,6 +10,27 @@ from typing import List
 def _utc_iso_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+@dataclass
+class MemoItem:
+    id: int
+    guild_id: int
+    owner_user_id: int
+    item_type: str
+    title: str
+    note: str | None
+    status: str
+
+    due_at_iso: str | None
+    remind_at_iso: str | None
+    reminded: int
+
+    created_at: str
+    updated_at: str
+
+    done_at_iso: str | None
+    duration_seconds: int | None
+    thoughts: str | None
+
 
 @dataclass
 class Event:
@@ -170,11 +191,43 @@ class EventStore:
                 """
             )
 
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memo_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                    guild_id INTEGER NOT NULL,
+                    owner_user_id INTEGER NOT NULL,
+
+                    item_type TEXT NOT NULL,          -- task/movie/anime/book/game/...
+                    title TEXT NOT NULL,
+                    note TEXT,
+
+                    status TEXT NOT NULL DEFAULT 'open',   -- open/done/canceled
+
+                    due_at_iso TEXT,          -- optional
+                    remind_at_iso TEXT,       -- optional
+                    reminded INTEGER NOT NULL DEFAULT 0,   -- 0/1
+
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+
+                    done_at_iso TEXT,
+                    duration_seconds INTEGER,
+                    thoughts TEXT              -- enforce <= 9999 in code
+                );
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memo_owner_status ON memo_items(guild_id, owner_user_id, status);"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memo_remind ON memo_items(status, reminded, remind_at_iso);"
+            )
+
             conn.commit()
 
-    # -----------------------
-    # category options
-    # -----------------------
+
     def list_category_options(self, *, guild_id: int, limit: int = 25) -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(
