@@ -7,6 +7,7 @@ import discord
 from src.base import register_base_events
 from src.client import MyClient
 from src.config_loading import load_config
+from src.dashboard import register_dashboard_commands
 from src.event import register_event_commands
 from src.category import register_category_commands
 from src.memo import register_memo_commands
@@ -50,6 +51,8 @@ def main():
     register_multimedia_commands(client.tree, client)
     # Memo Commands
     register_memo_commands(client.tree, client)
+    # Dashboard Commands
+    register_dashboard_commands(client.tree, client)
     # Base Components
     register_base_events(client, config)
 

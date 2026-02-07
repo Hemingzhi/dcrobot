@@ -969,40 +969,191 @@ class EventStore:
         user_id: int,
         limit: int = 25,
     ) -> list[IdTitle]:
+        """
+        List multimedia items provided/created by a specific user in this guild.
+        """
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT id, title
                 FROM multimedia_items
-                WHERE guild_id = ? AND user_id = ?
+                WHERE guild_id = ? AND provider_user_id = ?
                 ORDER BY id DESC
                 LIMIT ?;
                 """,
-                (guild_id, user_id, int(limit)),
+                (guild_id, int(user_id), int(limit)),
             ).fetchall()
 
         return [IdTitle(id=int(r[0]), title=str(r[1])) for r in rows]
-    
-    def mark_multimedia_item_watched(
+        
+    def dashboard_me(
         self,
         *,
         guild_id: int,
         user_id: int,
-        item_id: int,
-        review: str | None,
-    ) -> bool:
-        """Mark watched=1 and persist review ('-' if empty). Returns True if updated."""
-        final_review = (review or "").strip() or "-"
-
+        now_iso: str,
+    ) -> dict:
         with self._connect() as conn:
-            cur = conn.execute(
+            # events created by me (total / future active / reminders pending)
+            ev_total = conn.execute(
+                "SELECT COUNT(1) FROM events WHERE guild_id=? AND created_by=?;",
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+
+            ev_active_future = conn.execute(
+                "SELECT COUNT(1) FROM events WHERE guild_id=? AND created_by=? AND expires_at > ?;",
+                (guild_id, int(user_id), now_iso),
+            ).fetchone()[0]
+
+            ev_reminders_pending = conn.execute(
                 """
-                UPDATE multimedia_items
-                SET watched = 1,
-                    review = ?
-                WHERE guild_id = ? AND user_id = ? AND id = ?;
+                SELECT COUNT(1) FROM events
+                WHERE guild_id=? AND created_by=?
+                AND remind_at_iso IS NOT NULL
+                AND reminded=0
+                AND expires_at > ?;
                 """,
-                (final_review, guild_id, user_id, int(item_id)),
-            )
-            conn.commit()
-            return cur.rowcount > 0
+                (guild_id, int(user_id), now_iso),
+            ).fetchone()[0]
+
+            # memo (open/done/canceled + overdue + avg duration)
+            memo_open = conn.execute(
+                "SELECT COUNT(1) FROM memo_items WHERE guild_id=? AND owner_user_id=? AND status='open';",
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+            memo_done = conn.execute(
+                "SELECT COUNT(1) FROM memo_items WHERE guild_id=? AND owner_user_id=? AND status='done';",
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+            memo_canceled = conn.execute(
+                "SELECT COUNT(1) FROM memo_items WHERE guild_id=? AND owner_user_id=? AND status='canceled';",
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+            memo_overdue = conn.execute(
+                """
+                SELECT COUNT(1) FROM memo_items
+                WHERE guild_id=? AND owner_user_id=? AND status='open'
+                AND due_at_iso IS NOT NULL AND due_at_iso < ?;
+                """,
+                (guild_id, int(user_id), now_iso),
+            ).fetchone()[0]
+            memo_avg_dur = conn.execute(
+                """
+                SELECT AVG(duration_seconds) FROM memo_items
+                WHERE guild_id=? AND owner_user_id=? AND status='done'
+                AND duration_seconds IS NOT NULL;
+                """,
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+
+            # multimedia (watched/unwatched + reviews count)
+            mm_total = conn.execute(
+                """
+                SELECT COUNT(1) FROM multimedia_views
+                WHERE guild_id=? AND viewer_user_id=?;
+                """,
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+            mm_watched = conn.execute(
+                """
+                SELECT COUNT(1) FROM multimedia_views
+                WHERE guild_id=? AND viewer_user_id=? AND watched=1;
+                """,
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+            mm_unwatched = conn.execute(
+                """
+                SELECT COUNT(1) FROM multimedia_views
+                WHERE guild_id=? AND viewer_user_id=? AND watched=0;
+                """,
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+            mm_reviews = conn.execute(
+                """
+                SELECT COUNT(1) FROM multimedia_views
+                WHERE guild_id=? AND viewer_user_id=?
+                AND review IS NOT NULL AND TRIM(review) != '' AND review != '-';
+                """,
+                (guild_id, int(user_id)),
+            ).fetchone()[0]
+
+        return {
+            "events": {
+                "total_created": int(ev_total),
+                "active_future": int(ev_active_future),
+                "reminders_pending": int(ev_reminders_pending),
+            },
+            "memo": {
+                "open": int(memo_open),
+                "done": int(memo_done),
+                "canceled": int(memo_canceled),
+                "overdue": int(memo_overdue),
+                "avg_duration_seconds": (None if memo_avg_dur is None else float(memo_avg_dur)),
+            },
+            "multimedia": {
+                "records": int(mm_total),
+                "watched": int(mm_watched),
+                "unwatched": int(mm_unwatched),
+                "reviews": int(mm_reviews),
+            },
+        }
+
+
+    def dashboard_server(
+        self,
+        *,
+        guild_id: int,
+        now_iso: str,
+    ) -> dict:
+        with self._connect() as conn:
+            ev_total = conn.execute(
+                "SELECT COUNT(1) FROM events WHERE guild_id=?;",
+                (guild_id,),
+            ).fetchone()[0]
+            ev_active = conn.execute(
+                "SELECT COUNT(1) FROM events WHERE guild_id=? AND expires_at > ?;",
+                (guild_id, now_iso),
+            ).fetchone()[0]
+            ev_reminders_pending = conn.execute(
+                """
+                SELECT COUNT(1) FROM events
+                WHERE guild_id=? AND remind_at_iso IS NOT NULL AND reminded=0 AND expires_at > ?;
+                """,
+                (guild_id, now_iso),
+            ).fetchone()[0]
+
+            memo_open = conn.execute(
+                "SELECT COUNT(1) FROM memo_items WHERE guild_id=? AND status='open';",
+                (guild_id,),
+            ).fetchone()[0]
+            memo_active_users = conn.execute(
+                """
+                SELECT COUNT(DISTINCT owner_user_id)
+                FROM memo_items
+                WHERE guild_id=?;
+                """,
+                (guild_id,),
+            ).fetchone()[0]
+            memo_due_soon = conn.execute(
+                """
+                SELECT COUNT(1) FROM memo_items
+                WHERE guild_id=? AND status='open'
+                AND due_at_iso IS NOT NULL AND due_at_iso <= ?;
+                """,
+                (guild_id, now_iso),
+            ).fetchone()[0]
+
+            mm_items = conn.execute(
+                "SELECT COUNT(1) FROM multimedia_items WHERE guild_id=?;",
+                (guild_id,),
+            ).fetchone()[0]
+            mm_views = conn.execute(
+                "SELECT COUNT(1) FROM multimedia_views WHERE guild_id=?;",
+                (guild_id,),
+            ).fetchone()[0]
+
+        return {
+            "events": {"total": int(ev_total), "active": int(ev_active), "reminders_pending": int(ev_reminders_pending)},
+            "memo": {"open": int(memo_open), "active_users": int(memo_active_users), "due_or_overdue": int(memo_due_soon)},
+            "multimedia": {"items": int(mm_items), "views": int(mm_views)},
+        }
